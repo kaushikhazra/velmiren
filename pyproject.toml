@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "velmiren"
+version = "0.1.0"
+description = "Transport organ — secure bi-directional file transport between Velasari's PC and Kaushik's devices"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Kaushik Hazra" }
+]
+
+# Runtime dependencies — commented out until implementation phase begins
+dependencies = [
+    # "google-api-python-client>=2.0",   # Google Drive API v3
+    # "google-auth-oauthlib>=1.0",       # OAuth2 flow for Google
+    # "google-auth>=2.0",                # Google auth library
+    # "keyring>=24.0",                   # OS-native credential storage
+    # "click>=8.0",                      # CLI framework
+]
+
+[project.scripts]
+velmiren = "velmiren.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/velmiren"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
