@@ -2,8 +2,8 @@
 
 **"thread beyond horizon"** — Vel (thread) + Miren (horizon/beyond) in Seyrunic.
 
-Velmiren is the **transport organ** in Velasari's ecosystem — a CLI for secure,
-bi-directional file transport between Velasari's PC and Kaushik's devices.
+Velmiren is the **transport organ** in Velasari's ecosystem — a CLI for moving
+files between your local disk and a personal Google Drive folder.
 
 ---
 
@@ -11,80 +11,176 @@ bi-directional file transport between Velasari's PC and Kaushik's devices.
 
 | Organ | Seyrunic | Role |
 |-------|----------|------|
-| [Cognitive Memory](https://github.com/kaushik/cognitive-memory) | *one who remembers* | Memory organ — stores and recalls knowledge across sessions |
-| [Velhari](https://github.com/kaushik/velhari) | *thread worker* | Worker organ — executes async background tasks |
-| **Velmiren** | *thread beyond horizon* | Transport organ — moves files securely between devices |
+| [Cognitive Memory](https://github.com/kaushikhazra/cognitive-memory) | *one who remembers* | Memory organ — stores and recalls knowledge across sessions |
+| [Velhari](https://github.com/kaushikhazra/velhari) | *thread worker* | Worker organ — executes async background tasks |
+| **Velmiren** | *thread beyond horizon* | Transport organ — moves files between devices |
 
 ---
 
-## Architecture
+## What it does
 
-Velmiren is built on an **adapter pattern** — the core CLI and transport logic are
-backend-agnostic. Concrete backends implement a `TransportBackend` interface, making
-it straightforward to add new providers without touching core logic.
+Eight CLI commands, all CRUD against Google Drive:
+
+| Command | Behavior |
+|---|---|
+| `velmiren auth google` | Run OAuth flow once, persist refresh token locally. Idempotent. |
+| `velmiren status` | Show auth state, token expiry, account email. |
+| `velmiren send <local> --to <remote>` | Upload a local file to a Drive path. Overwrites by name+parent. |
+| `velmiren fetch <remote> --to <local>` | Download a Drive file to a local path. |
+| `velmiren list [<remote_dir>]` | List files in a Drive directory. |
+| `velmiren exists <remote>` | `true`/`false` (exit 0/1). |
+| `velmiren delete <remote> --force` | Delete a Drive file. `--force` required. |
+| `velmiren --help` | Usage. |
+
+---
+
+## v1 scope (May 2026)
+
+- **Backend**: Google Drive only. No adapter abstraction.
+- **Auth state**: a single file at `~/.velmiren/cred` (Windows: `%USERPROFILE%\.velmiren\cred`). Single-user PC — Windows default user-profile ACLs are sufficient.
+- **Delivery**: CLI only. No MCP wrapper.
+- **Size cap**: ~500 MB per file (Drive's simple-upload limit). Resumable upload deferred to v1.x.
+- **Encryption at rest**: none (transient transport, not archive).
+
+See `.claude/specs/mvp/` for the full requirement, design, and dryrun records.
+
+---
+
+## Installation
+
+### 1. Install the package
+
+```powershell
+git clone https://github.com/kaushikhazra/velmiren.git
+cd velmiren
+pip install -e .
+```
+
+### 2. Register a Google OAuth Desktop app
+
+Velmiren needs OAuth credentials for your own Google account. Roughly 5 minutes in the GCP console:
+
+1. Go to https://console.cloud.google.com/
+2. Create a new project (e.g. "velmiren-personal").
+3. **APIs & Services → Library** → search "Google Drive API" → **Enable**.
+4. **APIs & Services → OAuth consent screen**:
+   - User type: **External**
+   - Fill app name (e.g. "Velmiren"), your email
+   - You can skip scopes here — Velmiren requests `drive.file` (non-sensitive) at auth time
+   - Under **Test users**, add your own gmail address
+5. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
+   - Application type: **Desktop app**
+   - Name: "velmiren-cli"
+   - Note the **client ID** and **client secret**
+
+### 3. Provide the OAuth client to Velmiren
+
+Set environment variables in your shell session. PowerShell:
+
+```powershell
+$env:VELMIREN_OAUTH_CLIENT_ID = "<client id from step 2>"
+$env:VELMIREN_OAUTH_CLIENT_SECRET = "<client secret from step 2>"
+```
+
+Bash:
+
+```bash
+export VELMIREN_OAUTH_CLIENT_ID="<client id>"
+export VELMIREN_OAUTH_CLIENT_SECRET="<client secret>"
+```
+
+(To persist these across sessions, add them to your PowerShell profile or shell rc file.)
+
+### 4. Authenticate
+
+```powershell
+velmiren auth google
+```
+
+A browser opens with Google's consent screen. Because the app is "unverified," click **Advanced → Go to Velmiren (unsafe)**, then approve. The refresh token persists to `~/.velmiren/cred`. The terminal prints `OK — authenticated as <your email>`.
+
+### 5. Verify
+
+```powershell
+velmiren status
+```
+
+Should print `Auth state: authenticated`, your email, and token expiry.
+
+---
+
+## Round-trip example
+
+```powershell
+echo "hello" > test.txt
+velmiren send test.txt --to /velmiren-test/hello.txt
+velmiren list /velmiren-test
+velmiren fetch /velmiren-test/hello.txt --to fetched.txt
+type fetched.txt
+velmiren delete /velmiren-test/hello.txt --force
+```
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | not-found / `exists` returned false |
+| 2 | not authenticated (run `velmiren auth google`) |
+| 3 | user error (missing flag, bad arg) |
+| 4 | network / Google API error |
+| 5 | file exceeds the 500 MB size cap |
+
+---
+
+## Development
+
+Set up:
+
+```powershell
+git clone https://github.com/kaushikhazra/velmiren.git
+cd velmiren
+pip install -e .[dev]
+```
+
+Run the test suite:
+
+```powershell
+pytest tests/ -v --cov=src/velmiren
+```
+
+107 tests, target ≥ 80% coverage. Drive API is mocked; no live account needed.
+
+---
+
+## Project layout
 
 ```
 velmiren/
-├── cli.py          # Click-based CLI entry point
-├── core.py         # Transport orchestration (backend-agnostic)
-├── backends/
-│   ├── base.py     # TransportBackend abstract interface
-│   ├── gdrive.py   # Google Drive backend (v1)
-│   └── ...         # Box, Dropbox, etc. (future)
-└── credentials.py  # Keyring-based OS-native credential management
-```
-
-### v1 Backend: Google Drive
-
-- Uses the Google Drive API v3 via `google-api-python-client`
-- OAuth2 flow handled by `google-auth-oauthlib`
-- Credentials stored in the OS native keyring via `keyring` (no plaintext secrets)
-
-### Future Backends (adapter slots ready)
-
-- Box
-- Dropbox
-- SFTP / SCP
-- S3-compatible
-
----
-
-## Credential Strategy
-
-Velmiren uses **OS-native keyring storage** (`keyring` library) — no credentials
-are written to disk in plaintext. On Windows this is Windows Credential Manager,
-on macOS it is Keychain, on Linux it falls back to the Secret Service API.
-
----
-
-## CLI Usage (planned)
-
-```bash
-# Upload a file to the configured backend
-velmiren push ./report.pdf
-
-# Download a file by name or path
-velmiren pull report.pdf ./local/
-
-# List files in the remote transport directory
-velmiren ls
-
-# Configure credentials for a backend
-velmiren auth gdrive
-
-# Show current configuration
-velmiren config show
+├── src/velmiren/
+│   ├── cli.py         # Click commands, exception → exit-code mapping
+│   ├── auth.py        # OAuth flow, token persistence + refresh, status
+│   ├── drive.py       # Drive API wrapper (upload, download, list, delete)
+│   ├── paths.py       # Drive-path → file-ID resolution, root resolution
+│   ├── errors.py      # Typed exceptions
+│   └── __main__.py    # python -m velmiren entry point
+├── tests/             # pytest + pytest-mock, 107 tests
+└── .claude/specs/mvp/ # Requirement, design, task, dryrun records
 ```
 
 ---
 
-## Development Status
+## Out of scope (v1)
 
-**Spec phase.** No implementation code exists yet.
+- Encryption at rest
+- Multi-GB files / resumable upload
+- Real-time streaming
+- Multi-backend adapter (Box, Dropbox)
+- MCP wrapper
+- OS keyring
+- Multi-user / shared-host hardening
+- Token-refresh background daemon
 
-Spec documents live in `.claude/specs/mvp/`:
-- `requirement.md` — user stories and acceptance criteria
-- `design.md` — architecture decisions and data models
-- `task.md` — implementation checklist
-
-See the Taskyn project board for current status.
+These may return in v1.x if a real need surfaces.

@@ -39,3 +39,7 @@ temp/
 temp_*/
 *_temp/
 *_temp.*
+
+# Local test artifacts from manual round-trip
+test.txt
+fetched.txt
