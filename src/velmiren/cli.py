@@ -89,11 +89,20 @@ def status():
 @main.command("send")
 @click.argument("local_path")
 @click.option("--to", "remote_path", required=True, help="Remote Drive path")
-def send(local_path: str, remote_path: str):
-    """Upload a local file to Drive."""
+@click.option("--quiet", "-q", is_flag=True, help="Suppress upload progress")
+def send(local_path: str, remote_path: str, quiet: bool):
+    """Upload a local file to Drive (resumable, supports multi-GB)."""
     def _body():
         cred = auth.load()
-        file_id = drive.upload(cred, local_path, remote_path)
+
+        def _progress(uploaded: int, total: int):
+            pct = (uploaded / total * 100) if total else 0
+            click.echo(f"\r  {pct:5.1f}%  {uploaded:>14,} / {total:,} bytes", nl=False, err=True)
+
+        cb = None if quiet else _progress
+        file_id = drive.upload(cred, local_path, remote_path, progress=cb)
+        if not quiet:
+            click.echo("", err=True)  # newline after final progress line
         click.echo(f"{file_id}  {remote_path}")
 
     _run(_body)

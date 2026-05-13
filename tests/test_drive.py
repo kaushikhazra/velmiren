@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from velmiren import drive, paths
-from velmiren.errors import NetworkError, RemoteNotFoundError, SizeCapError
+from velmiren.errors import NetworkError, RemoteNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,8 @@ class TestUpload:
 
             with patch.object(paths, "ensure_path", return_value=("parent-id", "report.pdf")):
                 with patch.object(drive, "_find_by_name", return_value=None):
-                    svc.files.return_value.create.return_value.execute.return_value = {"id": "new-file-id"}
+                    request = svc.files.return_value.create.return_value
+                    request.next_chunk.return_value = (None, {"id": "new-file-id"})
                     with patch("velmiren.drive.MediaFileUpload"):
                         result = drive.upload(fake_cred, str(local), "/velmiren/report.pdf")
 
@@ -87,21 +88,47 @@ class TestUpload:
 
             with patch.object(paths, "ensure_path", return_value=("parent-id", "report.pdf")):
                 with patch.object(drive, "_find_by_name", return_value="existing-id"):
-                    svc.files.return_value.update.return_value.execute.return_value = {"id": "existing-id"}
+                    request = svc.files.return_value.update.return_value
+                    request.next_chunk.return_value = (None, {"id": "existing-id"})
                     with patch("velmiren.drive.MediaFileUpload"):
                         result = drive.upload(fake_cred, str(local), "/velmiren/report.pdf")
 
         assert result == "existing-id"
 
-    def test_size_cap_raises(self, tmp_path, fake_cred):
-        large = tmp_path / "big.bin"
-        large.write_bytes(b"\x00")  # actual write; we'll mock stat
+    def test_resumable_chunks_invoke_progress(self, tmp_path, fake_cred):
+        """Multi-chunk upload calls progress callback for each chunk + a final 100% call."""
+        local = tmp_path / "movie.mp4"
+        local.write_bytes(b"x" * 100)
 
-        with patch("pathlib.Path.stat") as mock_stat:
-            mock_stat.return_value.st_size = 600 * 1024 * 1024  # 600 MB
-            with patch.object(drive, "_service"):
-                with pytest.raises(SizeCapError):
-                    drive.upload(fake_cred, str(large), "/velmiren/big.bin")
+        progress_calls = []
+
+        def progress(uploaded, total):
+            progress_calls.append((uploaded, total))
+
+        with patch.object(drive, "_service") as mock_svc:
+            svc = MagicMock()
+            mock_svc.return_value = svc
+            with patch.object(paths, "ensure_path", return_value=("parent-id", "movie.mp4")):
+                with patch.object(drive, "_find_by_name", return_value=None):
+                    request = svc.files.return_value.create.return_value
+                    status_30 = MagicMock(resumable_progress=30)
+                    status_70 = MagicMock(resumable_progress=70)
+                    request.next_chunk.side_effect = [
+                        (status_30, None),
+                        (status_70, None),
+                        (None, {"id": "big-id"}),
+                    ]
+                    with patch("velmiren.drive.MediaFileUpload"):
+                        with patch("pathlib.Path.stat") as mock_stat:
+                            mock_stat.return_value.st_size = 100
+                            result = drive.upload(
+                                fake_cred, str(local), "/velmiren/movie.mp4",
+                                progress=progress,
+                            )
+
+        assert result == "big-id"
+        # Two mid-upload progress reports + one final-100 report
+        assert progress_calls == [(30, 100), (70, 100), (100, 100)]
 
     def test_http_error_raises_network_error(self, tmp_path, fake_cred):
         local = tmp_path / "file.pdf"

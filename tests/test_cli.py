@@ -14,7 +14,6 @@ from velmiren.errors import (
     NetworkError,
     NotAuthenticatedError,
     RemoteNotFoundError,
-    SizeCapError,
     UserError,
 )
 
@@ -135,18 +134,6 @@ class TestSendCommand:
 
         assert result.exit_code == 2
         assert "not authenticated" in result.output
-
-    def test_size_cap_exits_five(self, tmp_path, fake_cred):
-        local = tmp_path / "big.bin"
-        local.write_bytes(b"data")
-
-        with patch("velmiren.cli.auth.load", return_value=fake_cred):
-            with patch("velmiren.cli.drive.upload", side_effect=SizeCapError()):
-                runner = CliRunner()
-                result = runner.invoke(main, ["send", str(local), "--to", "/velmiren/big.bin"], catch_exceptions=True)
-
-        assert result.exit_code == 5
-        assert "500 MB" in result.output
 
     def test_missing_to_flag_exits_nonzero(self, tmp_path):
         local = tmp_path / "report.pdf"

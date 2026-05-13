@@ -6,14 +6,12 @@ from velmiren.errors import (
     EXIT_AUTH,
     EXIT_NETWORK,
     EXIT_NOT_FOUND,
-    EXIT_SIZE_CAP,
     EXIT_SUCCESS,
     EXIT_USER,
     AuthExpiredError,
     NetworkError,
     NotAuthenticatedError,
     RemoteNotFoundError,
-    SizeCapError,
     UserError,
     VelmirenError,
 )
@@ -34,9 +32,6 @@ class TestExitCodeConstants:
 
     def test_network_is_four(self):
         assert EXIT_NETWORK == 4
-
-    def test_size_cap_is_five(self):
-        assert EXIT_SIZE_CAP == 5
 
 
 class TestVelmirenError:
@@ -117,13 +112,3 @@ class TestNetworkError:
         assert err.status_code is None
 
 
-class TestSizeCapError:
-    def test_exit_code(self):
-        assert SizeCapError.exit_code == 5
-
-    def test_default_message(self):
-        err = SizeCapError()
-        assert "500 MB" in err.message
-
-    def test_is_velmiren_error(self):
-        assert isinstance(SizeCapError(), VelmirenError)

@@ -39,7 +39,7 @@ Eight CLI commands, all CRUD against Google Drive:
 - **Backend**: Google Drive only. No adapter abstraction.
 - **Auth state**: a single file at `~/.velmiren/cred` (Windows: `%USERPROFILE%\.velmiren\cred`). Single-user PC — Windows default user-profile ACLs are sufficient.
 - **Delivery**: CLI only. No MCP wrapper.
-- **Size cap**: ~500 MB per file (Drive's simple-upload limit). Resumable upload deferred to v1.x.
+- **Upload**: resumable, chunked (8 MB chunks), retryable. Supports up to 5 TB per Drive's resumable-upload limit. No artificial size cap.
 - **Encryption at rest**: none (transient transport, not archive).
 
 See `.claude/specs/mvp/` for the full requirement, design, and dryrun records.
@@ -131,7 +131,6 @@ velmiren delete /velmiren-test/hello.txt --force
 | 2 | not authenticated (run `velmiren auth google`) |
 | 3 | user error (missing flag, bad arg) |
 | 4 | network / Google API error |
-| 5 | file exceeds the 500 MB size cap |
 
 ---
 
@@ -151,7 +150,7 @@ Run the test suite:
 pytest tests/ -v --cov=src/velmiren
 ```
 
-107 tests, target ≥ 80% coverage. Drive API is mocked; no live account needed.
+102 tests, target ≥ 80% coverage. Drive API is mocked; no live account needed.
 
 ---
 
@@ -175,7 +174,6 @@ velmiren/
 ## Out of scope (v1)
 
 - Encryption at rest
-- Multi-GB files / resumable upload
 - Real-time streaming
 - Multi-backend adapter (Box, Dropbox)
 - MCP wrapper

@@ -12,9 +12,12 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from velmiren import paths
-from velmiren.errors import NetworkError, RemoteNotFoundError, SizeCapError
+from velmiren.errors import NetworkError, RemoteNotFoundError
 
-_SIZE_CAP = 500 * 1024 * 1024  # 500 MB
+# Chunk size for resumable uploads. 8 MB is googleapiclient's recommended
+# default for desktop bandwidth — large enough to amortize HTTP overhead,
+# small enough that a dropped chunk costs ~one chunk of retransmit.
+_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -54,35 +57,41 @@ def _find_by_name(svc: Any, name: str, parent_id: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def upload(cred: Any, local_path: str, remote_path: str) -> str:
+def upload(cred: Any, local_path: str, remote_path: str, progress=None) -> str:
     """
     Upload local file to remote_path.
     Overwrites if a file with that name already exists (idempotent).
+    Uses Drive's resumable upload (chunked + retryable) — supports up to 5 TB.
+    Optional `progress` callable receives (bytes_uploaded, total_bytes) per chunk.
     Returns Drive file ID.
-    Raises SizeCapError, NetworkError, RemoteNotFoundError.
+    Raises NetworkError, RemoteNotFoundError.
     """
     svc = _service(cred)
-    local = pathlib.Path(local_path)
-    if local.stat().st_size > _SIZE_CAP:
-        raise SizeCapError()
     try:
         parent_id, name = paths.ensure_path(svc, remote_path)
         existing_id = _find_by_name(svc, name, parent_id)
-        media = MediaFileUpload(local_path, resumable=False)
+        media = MediaFileUpload(
+            local_path, resumable=True, chunksize=_UPLOAD_CHUNK_SIZE
+        )
         if existing_id:
-            result = svc.files().update(
-                fileId=existing_id,
-                media_body=media,
-                fields="id",
-            ).execute()
+            request = svc.files().update(
+                fileId=existing_id, media_body=media, fields="id"
+            )
         else:
             metadata = {"name": name, "parents": [parent_id]}
-            result = svc.files().create(
-                body=metadata,
-                media_body=media,
-                fields="id",
-            ).execute()
-        return result["id"]
+            request = svc.files().create(
+                body=metadata, media_body=media, fields="id"
+            )
+        # Drive returns resumable progress via next_chunk(); loop until done.
+        response = None
+        total = pathlib.Path(local_path).stat().st_size
+        while response is None:
+            status, response = request.next_chunk()
+            if progress is not None and status is not None:
+                progress(status.resumable_progress, total)
+        if progress is not None:
+            progress(total, total)
+        return response["id"]
     except HttpError as exc:
         raise NetworkError(str(exc), status_code=exc.resp.status) from exc
 
